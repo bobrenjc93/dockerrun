@@ -49,6 +49,7 @@ pip install --upgrade pip setuptools wheel
 
 echo "=== Installing Python requirements ==="
 pip install -r requirements.txt
+pip install --group dev
 pip install pytest
 
 echo "=== Building PyTorch in develop mode ==="
@@ -66,7 +67,7 @@ print(torch.rand(2))
 EOF
 
 echo "=== Running PyTorch tensor tests ==="
-pytest test/test_tensor.py -q
+pytest test/test_autograd.py -q
 
 echo "=== Build and tests completed successfully ==="
 """
@@ -163,7 +164,7 @@ pip install --upgrade pip setuptools wheel
 
 echo "=== Installing requirements.txt ==="
 pip install -r requirements.txt
-pip install --all-groups
+pip install --group dev
 
 echo "=== Verifying installation ==="
 pip list | head -20

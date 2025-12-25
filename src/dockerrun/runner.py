@@ -13,6 +13,9 @@ from docker.errors import ImageNotFound, APIError, ContainerError as DockerConta
 
 from .exceptions import DockerRunError, ContainerError, ImageNotFoundError
 
+# Default swap configuration: 32GB
+DEFAULT_SWAP_BYTES = 32 * 1024 * 1024 * 1024  # 32GB in bytes
+
 
 class StreamType(Enum):
     """Type of output stream."""
@@ -112,6 +115,46 @@ class DockerRunner:
             except APIError as e:
                 raise ImageNotFoundError(f"Failed to pull image '{image}': {e}") from e
 
+    def _apply_swap_config(self, kwargs: dict) -> dict:
+        """Apply default swap configuration to container kwargs.
+        
+        Ensures 32GB of swap is available for every container.
+        If mem_limit is already set, adds 32GB to it for memswap_limit.
+        If mem_limit is not set, uses memswap_limit=-1 for unlimited swap.
+        """
+        config = kwargs.copy()
+        
+        if 'memswap_limit' not in config:
+            mem_limit = config.get('mem_limit')
+            if mem_limit is not None:
+                # Convert mem_limit to bytes and add 32GB for swap
+                if isinstance(mem_limit, str):
+                    # Parse string like "4g", "512m", etc.
+                    mem_bytes = self._parse_memory_string(mem_limit)
+                else:
+                    mem_bytes = mem_limit
+                config['memswap_limit'] = mem_bytes + DEFAULT_SWAP_BYTES
+            else:
+                # No memory limit set - allow unlimited swap
+                config['memswap_limit'] = -1
+        
+        return config
+
+    def _parse_memory_string(self, mem_str: str) -> int:
+        """Parse a memory string like '4g', '512m' to bytes."""
+        mem_str = mem_str.strip().lower()
+        multipliers = {
+            'b': 1,
+            'k': 1024,
+            'm': 1024 * 1024,
+            'g': 1024 * 1024 * 1024,
+            't': 1024 * 1024 * 1024 * 1024,
+        }
+        
+        if mem_str[-1] in multipliers:
+            return int(float(mem_str[:-1]) * multipliers[mem_str[-1]])
+        return int(mem_str)
+
     def run(
         self,
         image: str,
@@ -147,6 +190,9 @@ class DockerRunner:
         timeout = timeout or self.timeout
         stdout_data = io.BytesIO()
         stderr_data = io.BytesIO()
+
+        # Apply swap configuration
+        kwargs = self._apply_swap_config(kwargs)
 
         try:
             container = self.client.containers.run(
@@ -224,6 +270,9 @@ class DockerRunner:
         """
         if pull:
             self._ensure_image(image)
+
+        # Apply swap configuration
+        kwargs = self._apply_swap_config(kwargs)
 
         try:
             container = self.client.containers.run(
@@ -303,6 +352,9 @@ class DockerRunner:
         """
         if pull:
             self._ensure_image(image)
+
+        # Apply swap configuration
+        kwargs = self._apply_swap_config(kwargs)
 
         timeout = timeout or self.timeout
         stdout_chunks: list[bytes] = []
