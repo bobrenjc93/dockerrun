@@ -119,7 +119,11 @@ class TestPyTorchBuildE2E:
             environment={
                 "DEBIAN_FRONTEND": "noninteractive",
                 "TZ": "UTC",
+                # Limit parallel compilation jobs to reduce memory pressure
+                # and avoid excessive swap thrashing. Each C++ compile can use 2-4GB.
+                "MAX_JOBS": "4",
             },
+            # Uses default 8GB RAM + 200GB swap from runner config
         )
         
         full_output = "".join(output_chunks)

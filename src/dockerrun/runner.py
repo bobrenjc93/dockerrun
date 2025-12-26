@@ -13,8 +13,21 @@ from docker.errors import ImageNotFound, APIError, ContainerError as DockerConta
 
 from .exceptions import DockerRunError, ContainerError, ImageNotFoundError
 
-# Default swap configuration: 32GB
-DEFAULT_SWAP_BYTES = 32 * 1024 * 1024 * 1024  # 32GB in bytes
+# Default resource configuration: use host limits (no restrictions)
+# Memory: -1 means unlimited (use host memory)
+DEFAULT_MEMORY_LIMIT = -1
+
+# Swap: -1 means unlimited (use host swap)
+DEFAULT_SWAP_LIMIT = -1
+
+# Disk: None means no limit (use host disk)
+DEFAULT_DISK_SIZE = None
+
+# CPU: 0 means use all available CPUs (no limit)
+DEFAULT_CPU_COUNT = 0
+
+# Memory swappiness: None means use host default (typically 60)
+DEFAULT_MEMORY_SWAPPINESS = None
 
 
 class StreamType(Enum):
@@ -115,28 +128,50 @@ class DockerRunner:
             except APIError as e:
                 raise ImageNotFoundError(f"Failed to pull image '{image}': {e}") from e
 
-    def _apply_swap_config(self, kwargs: dict) -> dict:
-        """Apply default swap configuration to container kwargs.
+    def _apply_resource_config(self, kwargs: dict) -> dict:
+        """Apply default resource configuration to container kwargs.
         
-        Ensures 32GB of swap is available for every container.
-        If mem_limit is already set, adds 32GB to it for memswap_limit.
-        If mem_limit is not set, uses memswap_limit=-1 for unlimited swap.
+        By default, uses host limits (no restrictions):
+        - Memory: unlimited (use host memory)
+        - Swap: unlimited (use host swap)
+        - Swappiness: host default
+        - Disk: unlimited (use host disk)
+        - CPU: all available CPUs
         """
         config = kwargs.copy()
         
+        # Apply memory limit if not specified (-1 means unlimited/host limit)
+        if 'mem_limit' not in config and DEFAULT_MEMORY_LIMIT != -1:
+            config['mem_limit'] = DEFAULT_MEMORY_LIMIT
+        
+        # Apply swap configuration (-1 means unlimited/host limit)
         if 'memswap_limit' not in config:
             mem_limit = config.get('mem_limit')
-            if mem_limit is not None:
-                # Convert mem_limit to bytes and add 32GB for swap
+            if mem_limit is not None and mem_limit != -1 and DEFAULT_SWAP_LIMIT != -1:
+                # If there's a memory limit set, apply swap limit relative to it
                 if isinstance(mem_limit, str):
-                    # Parse string like "4g", "512m", etc.
                     mem_bytes = self._parse_memory_string(mem_limit)
                 else:
                     mem_bytes = mem_limit
-                config['memswap_limit'] = mem_bytes + DEFAULT_SWAP_BYTES
-            else:
-                # No memory limit set - allow unlimited swap
-                config['memswap_limit'] = -1
+                config['memswap_limit'] = mem_bytes + DEFAULT_SWAP_LIMIT
+            # If no memory limit or unlimited swap, don't set memswap_limit (uses host default)
+        
+        # Apply memory swappiness if specified (None means use host default)
+        if 'mem_swappiness' not in config and DEFAULT_MEMORY_SWAPPINESS is not None:
+            config['mem_swappiness'] = DEFAULT_MEMORY_SWAPPINESS
+        
+        # Apply CPU count if not specified (0 means use all available)
+        if 'nano_cpus' not in config and 'cpu_count' not in config:
+            if DEFAULT_CPU_COUNT > 0:
+                config['cpu_count'] = DEFAULT_CPU_COUNT
+            # If DEFAULT_CPU_COUNT is 0, don't set any limit (use all CPUs)
+        
+        # Apply disk size configuration if specified (None means no limit)
+        if DEFAULT_DISK_SIZE is not None:
+            if 'storage_opt' not in config:
+                config['storage_opt'] = {'size': DEFAULT_DISK_SIZE}
+            elif 'size' not in config['storage_opt']:
+                config['storage_opt']['size'] = DEFAULT_DISK_SIZE
         
         return config
 
@@ -192,7 +227,7 @@ class DockerRunner:
         stderr_data = io.BytesIO()
 
         # Apply swap configuration
-        kwargs = self._apply_swap_config(kwargs)
+        kwargs = self._apply_resource_config(kwargs)
 
         try:
             container = self.client.containers.run(
@@ -272,7 +307,7 @@ class DockerRunner:
             self._ensure_image(image)
 
         # Apply swap configuration
-        kwargs = self._apply_swap_config(kwargs)
+        kwargs = self._apply_resource_config(kwargs)
 
         try:
             container = self.client.containers.run(
@@ -354,7 +389,7 @@ class DockerRunner:
             self._ensure_image(image)
 
         # Apply swap configuration
-        kwargs = self._apply_swap_config(kwargs)
+        kwargs = self._apply_resource_config(kwargs)
 
         timeout = timeout or self.timeout
         stdout_chunks: list[bytes] = []
